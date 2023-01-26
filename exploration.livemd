@@ -1,0 +1,59 @@
+# Ecto Examples
+
+```elixir
+# Relative path from this .livemd file to the platform repo root
+app_root = Path.join(__DIR__, ".")
+
+Mix.install(
+  [
+    {:ecto_examples, path: app_root, env: :dev},
+    {:kino, "~> 0.7.0"}
+  ],
+  config_path: Path.join(app_root, "config/config.exs"),
+  lockfile: Path.join(app_root, "mix.lock")
+)
+
+alias EctoExamples.{Post, PostTag, Repo, Tag, User}
+alias Ecto.Changeset
+```
+
+## Some setup and helpers
+
+```elixir
+post_tags = fn id ->
+  Post |> Repo.get(id) |> Repo.preload(:tags) |> Map.get(:tags) |> Enum.map(& &1.name)
+end
+
+post_tags.(1)
+```
+
+## Many To Many: Post Tags
+
+Sometimes we have two kinds of things (e.g. blog posts and tags) and we just want to control e.g. which tags are associated to a particular post. Maybe we have a form with checkboxes or some nicer typeahead UI, and our form or API submission contains the full list of things that should be associated. In this case, we can use `put_assoc` to set the whole list of associations at once.
+
+But there are caveats:
+
+* We have to preload all of the existing tags onto the post before creating the changeset, in order to allow Ecto to compare the old and new lists of tags and determine what actions to take
+* We have to pass a list of `Tag` structs (not just ids) into `put_assoc`. (I fooled around with a thing to do this for you [here](https://github.com/grossvogel/put_assoc_by_id) but don't consider it my best idea ever)
+* We have to set the "dangerous" `on_replace: :delete` option on the schema relation
+
+The reason that setting is dangerous is because somebody might just be wanting to _add a single new_ tag to the post. If they pass just that one tag to `put_assoc` when the relation has `on_replace: :delete` set, then all the _other_ tags will be removed.
+
+```elixir
+import Ecto.Query
+
+update_post_tags = fn post_id, tag_ids ->
+  post = Post |> preload(:tags) |> Repo.get(post_id)
+  tags = Tag |> where([tag], tag.id in ^tag_ids) |> Repo.all()
+
+  post
+  |> Changeset.change()
+  |> Changeset.put_assoc(:tags, tags)
+  |> Repo.update()
+end
+
+# NOTE: this might be confusing b/c it's out of the context of the usual modules :|
+
+update_post_tags.(5, [2, 3, 4])
+post_tags.(5)
+```
