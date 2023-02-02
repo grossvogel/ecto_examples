@@ -86,8 +86,8 @@ This is where things get interesting. Note that, at this stage, we don't really 
 post = Repo.get(Post, 1)
 
 params = %{
-  "title" => "New Title",
-  "body" => "Updating the body of post #1 to contain this new text"
+  "title" => "New Title for real",
+  "body" => "Updating the body of post #1 to contain this new new text"
 }
 
 happy_changeset =
@@ -147,7 +147,7 @@ The key thing about `cast_assoc` is that it's strictly for managing _which_ thin
 But there are caveats:
 
 * We have to preload all of the existing tags onto the post before creating the changeset, in order to allow Ecto to compare the old and new lists of tags and determine what actions to take
-* We have to pass a list of `Tag` structs (not just ids) into `put_assoc`. (I fooled around with a thing to do this for you [here](https://github.com/grossvogel/put_assoc_by_id) but don't consider it my best idea ever)
+* We have to pass a list of `Tag` structs (not just ids) into `put_assoc`. (I fooled around with a thing to do this for you [here](https://github.com/grossvogel/put_assoc_by_id) but don't consider it my best idea ever) **NOTE** we may be able to just use maps as long as the IDs are correct? https://hexdocs.pm/ecto/Ecto.Changeset.html#get_field/3 (we run into trouble b/c it tries to insert a new tag with the same primary key.)
 * We have to set the "dangerous" `on_replace: :delete` option on the schema relation
 
 The reason that setting is dangerous is because somebody might just be wanting to _add a single new_ tag to the post. If they pass just that one tag to `put_assoc` when the relation has `on_replace: :delete` set, then all the _other_ tags will be removed.
@@ -161,8 +161,7 @@ tag_ids = [1, 2, 3]
 
 # this stuff would usually live in the context module (and/or controller)
 post = Post |> preload(:tags) |> Repo.get(post_id)
-tags = Tag |> where([tag], tag.id in ^tag_ids) |> Repo.all()
-params = %{}
+tags = Tag |> where([t], t.id in ^tag_ids) |> Repo.all()
 
 # this would often be in the changeset function on the schema
 changeset =
@@ -193,8 +192,7 @@ post_params = %{
   "title" => "Blog Post Title",
   "body" => "Blog Post Body",
   "tags" => [
-    # notice no ID
-    %{"id" => 27, "name" => "AN EXISTING TAG"}
+    %{"name" => "even newer"}
   ]
 }
 
@@ -267,4 +265,8 @@ If we try to add the same tag again, we can get a duplicate key error, which we 
 |> Repo.insert(on_conflict: :nothing)
 
 post_tags.(post_id)
+```
+
+```elixir
+
 ```
