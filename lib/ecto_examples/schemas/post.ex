@@ -16,3 +16,4 @@ defmodule EctoExamples.Post do
     timestamps()
   end
 end
+

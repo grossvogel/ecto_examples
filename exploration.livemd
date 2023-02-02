@@ -21,15 +21,128 @@ alias Ecto.Changeset
 
 ```elixir
 post_tags = fn id ->
-  Post |> Repo.get(id) |> Repo.preload(:tags) |> Map.get(:tags) |> Enum.map(& &1.name)
+  Post
+  |> Repo.get(id)
+  |> Repo.preload(:tags)
+  |> Map.get(:tags)
+  |> Enum.map(&Map.take(&1, [:id, :name]))
 end
 
 post_tags.(1)
 ```
 
+## What is a Changeset?
+
+A changeset is a [Token](https://rrrene.org/2018/03/26/flow-elixir-using-plug-like-token/) representing the entire journey involved in updating a piece of data. Typically the steps of that journey look like this:
+
+1. Build a "blank slate" changeset showing the state before anything gets changed
+2. Pass that changeset to a form to render the current values
+3. When we know the intended changes (e.g. via form submit), record the intended changes in the changeset
+4. Pass the changeset to the `Ecto.Repo` to apply them to the database (assuming validations pass)
+5. If there were errors either in the changeset validators or in the DB operation, those are also recorded in the changeset, which can be used to render the error state of the form and collect more info.
+
+```elixir
+# What a changeset looks like
+sample_changeset = Changeset.change(%Post{})
+IO.inspect(sample_changeset)
+
+# the %Changeset{} struct implements the inspect protocol
+# we only see its "public" data when we inspect it. We can dig though
+Map.from_struct(sample_changeset)
+```
+
+#### 1. Blank Slate Stage
+
+Before we even start to make changes, we create a changeset that represents a clean slate, storing only the _current_ state of the thing we're going to change. This can be done with `Ecto.Changeset.change(mystruct)` (Or sometimes using the built-out `changeset` function from the schema module, with an empty `params` or `attrs` map.)
+
+```elixir
+post = Repo.get(Post, 1)
+
+from_change = Changeset.change(post) |> IO.inspect()
+
+# your Scheme.changeset/2 function probably looks something like this
+from_cast =
+  post
+  |> Changeset.cast(%{}, [:title, :body])
+  |> Changeset.validate_required([:title, :body])
+  |> IO.inspect()
+
+# these two are almost identical,
+# except that the from_cast one includes info about the
+# params map (%{} instead of nil) and the validations applied
+```
+
+#### 2. Initial form render
+
+At this stage, the changeset is just holding a copy of our original data, so it's not providing much extra value beyond that. The beauty of basing our forms off of changesets comes later. If there are _errors_ in the form data, we want to show the user the same form, with their changes overlaid on top of the original data, as well as field-specific error messages about what went wrong. The changeset includes everything required to make that happen.
+
+<!-- livebook:{"break_markdown":true} -->
+
+#### 3. Apply intended changes
+
+This is where things get interesting. Note that, at this stage, we don't really use the changeset from the original form... we create a new (blank) one and apply the form data to it. This is where we get into changeset functions like `cast`, `put_assoc`, `cast_assoc` and validators like `validate_required`. Conceptually, though, it's all just about recording our intention to make changes and validating that against some rules (without going to the DB yet.)
+
+```elixir
+post = Repo.get(Post, 1)
+
+params = %{
+  "title" => "New Title",
+  "body" => "Updating the body of post #1 to contain this new text"
+}
+
+happy_changeset =
+  post
+  |> Changeset.cast(params, [:title, :body])
+  |> Changeset.validate_required([:title, :body])
+```
+
+```elixir
+params = %{"title" => "Other new title", "body" => ""}
+
+sad_changeset =
+  post
+  |> Changeset.cast(params, [:title, :body])
+  |> Changeset.validate_required([:title, :body])
+```
+
+#### 4. Go to the DB
+
+Once we've recorded our changes to the changeset, we can pass it off to one of the `Ecto.Repo` functions that accepts changesets, like `update` or `insert`. This can have a few different outcomes:
+
+* If all goes well, we'll get `{:ok, updated_or_created_thing}` back
+* If the changeset already has validation errors, no DB call will be made and the function will return an error tuple like `{:error, changeset}`. We can use that changeset with validation errors to re-render our form with helpful info for the user.
+* If the changeset has no validation errors and a DB call is made, it could still fail. For example, if we try to assign an invalid id to a foreign key value, the DB will complain. If we've added the right configuration to our changeset (via [foreign_key_constraint/3](https://hexdocs.pm/ecto/Ecto.Changeset.html#foreign_key_constraint/3)), the error will be added to the changeset for that field. Otherwise, Ecto will raise.
+
+```elixir
+Repo.update(happy_changeset)
+```
+
+```elixir
+Repo.update(sad_changeset)
+```
+
+```elixir
+# trying to set an invalid user id
+post
+|> Changeset.cast(%{"user_id" => 999_999}, [:user_id])
+|> Repo.update()
+```
+
+```elixir
+# trying to set an invalid user id with proper handling
+post
+|> Changeset.cast(%{"user_id" => 999_999}, [:user_id])
+|> Changeset.foreign_key_constraint(:user_id, message: "Sorry, that user does not exist!")
+|> Repo.update()
+```
+
 ## Many To Many: Post Tags
 
+#### Using `put_assoc`
+
 Sometimes we have two kinds of things (e.g. blog posts and tags) and we just want to control e.g. which tags are associated to a particular post. Maybe we have a form with checkboxes or some nicer typeahead UI, and our form or API submission contains the full list of things that should be associated. In this case, we can use `put_assoc` to set the whole list of associations at once.
+
+The key thing about `cast_assoc` is that it's strictly for managing _which_ things are connected, not creating or modifying those things.
 
 But there are caveats:
 
@@ -42,18 +155,116 @@ The reason that setting is dangerous is because somebody might just be wanting t
 ```elixir
 import Ecto.Query
 
-update_post_tags = fn post_id, tag_ids ->
-  post = Post |> preload(:tags) |> Repo.get(post_id)
-  tags = Tag |> where([tag], tag.id in ^tag_ids) |> Repo.all()
+# say we want to update this post to have exactly these tags
+post_id = 5
+tag_ids = [1, 2, 3]
 
+# this stuff would usually live in the context module (and/or controller)
+post = Post |> preload(:tags) |> Repo.get(post_id)
+tags = Tag |> where([tag], tag.id in ^tag_ids) |> Repo.all()
+params = %{}
+
+# this would often be in the changeset function on the schema
+changeset =
   post
   |> Changeset.change()
   |> Changeset.put_assoc(:tags, tags)
-  |> Repo.update()
+
+# again part of the context module
+Repo.update(changeset)
+
+post_tags.(post_id)
+```
+
+#### Using `cast_assoc`
+
+Sometimes you have a form that lets you edit a thing and its children (or other relations) all at the same time, and this is what `cast_assoc` is for. You could imagine, for instance, a "profile" screen that lets you edit some attributes of the `User` but also some attributes of the user's `Account`.
+
+The key thing about `cast_assoc` is that it lets you _update_ the attached things, and it fits perfectly with the `inputs_for` helper in Phoenix, which generates a little sub-form for related entities. `cast_assoc` can also be used to _create and attach new things_ or to _remove things_, but it's not great for _attaching things that already exist_.
+
+```elixir
+post_id = 6
+post = Post |> preload(:tags) |> Repo.get(post_id)
+```
+
+```elixir
+# this is what the params might look like if you used `inputs_for(f, :tags)`
+post_params = %{
+  "title" => "Blog Post Title",
+  "body" => "Blog Post Body",
+  "tags" => [
+    # notice no ID
+    %{"id" => 27, "name" => "AN EXISTING TAG"}
+  ]
+}
+
+tag_changeset = fn tag, params ->
+  tag
+  |> Changeset.cast(params, [:name])
+  |> Changeset.validate_required([:name])
+  |> Changeset.unique_constraint([:name])
 end
 
-# NOTE: this might be confusing b/c it's out of the context of the usual modules :|
+post
+|> Changeset.cast(post_params, [:title, :body])
+|> Changeset.cast_assoc(:tags, with: tag_changeset)
+|> Changeset.validate_required([:title, :body])
+|> Repo.update()
+```
 
-update_post_tags.(5, [2, 3, 4])
-post_tags.(5)
+You can also detach tags by leaving them out of the list
+
+```elixir
+params_with_empty_tags = Map.put(params, "tags", [])
+
+post
+|> Changeset.cast(params_with_empty_tags, [:title, :body])
+|> Changeset.cast_assoc(:tags, with: tag_changeset)
+|> Changeset.validate_required([:title, :body])
+|> Repo.update()
+```
+
+But if you try to connect an existing tag like tag #1, it gets mad at you. That's because it expects to find any _existing_ items _already preloaded_. If they're not part of the post's existing tags, it has no way to know the tag exists so it tries to create it.
+
+```elixir
+params_with_existing_tag = Map.put(params, "tags", [%{"id" => 1, "name" => "Dantooine"}])
+
+post
+|> Changeset.cast(params_with_existing_tag, [:title, :body])
+|> Changeset.cast_assoc(:tags, with: tag_changeset)
+|> Changeset.validate_required([:title, :body])
+|> Repo.update()
+```
+
+#### Managing the join table directly
+
+We don't have to set up an Ecto schema for the join table in a many_to_many relationship, but we can. And we can manage those rows just like anything else.
+
+When managing them one at a time (e.g. attaching or removing a single tag to/from a post), I actually prefer this.
+
+```elixir
+import Ecto.Query
+
+post_id = 5
+tag_id = 3
+
+# Remove the tag from the post
+PostTag |> where(tag_id: ^tag_id) |> where(post_id: ^post_id) |> Repo.delete_all()
+
+# Add the tag to this post 
+%PostTag{}
+|> Changeset.cast(%{tag_id: tag_id, post_id: post_id}, [:tag_id, :post_id])
+|> Repo.insert()
+
+post_tags.(post_id)
+```
+
+If we try to add the same tag again, we can get a duplicate key error, which we can get around with `on_conflict`. There are more options here, such as updating some fields of the existing record or specifying on _which_ conflicts to take a given action.
+
+```elixir
+%PostTag{}
+|> Changeset.cast(%{tag_id: tag_id, post_id: post_id}, [:tag_id, :post_id])
+|> Repo.insert(on_conflict: :nothing)
+
+post_tags.(post_id)
 ```
