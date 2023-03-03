@@ -1,6 +1,8 @@
 defmodule EctoExamplesWeb.FunLive.Fun do
   use EctoExamplesWeb, :live_view
 
+  alias EctoExamplesWeb.FunLive.TestComponent
+
   @impl true
   def mount(_params, _session, socket) do
     :ok = EctoExamplesWeb.Endpoint.subscribe("message_received", [])
@@ -10,7 +12,6 @@ defmodule EctoExamplesWeb.FunLive.Fun do
       |> assign(:messages, [])
       |> assign(:message, nil)
       |> assign(:having_fun?, false)
-      |> assign(:show_assigns?, false)
       |> assign(:pid, self())
 
     {:ok, socket}
@@ -36,11 +37,6 @@ defmodule EctoExamplesWeb.FunLive.Fun do
     )
 
     {:noreply, assign(socket, :message, "")}
-  end
-
-  @impl true
-  def handle_event("toggle_show_assigns", _, socket) do
-    {:noreply, assign(socket, :show_assigns?, !socket.assigns.show_assigns?)}
   end
 
   @impl true

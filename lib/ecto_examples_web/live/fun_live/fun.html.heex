@@ -14,18 +14,6 @@ Are we having fun yet?
   <button>Send</button>
 </form>
 
-<%= if @show_assigns? do %>
-<div phx-click="toggle_show_assigns">
-  <h5>Message</h5>
-  <pre><%= @message %></pre>
-
-  <h5>Having Fun?</h5>
-  <pre><%= @having_fun? %></pre>
-</div>
-<% else %>
-  <!--<button phx-click="toggle_show_assigns">Show Assigns</button>-->
-<% end %>
-
 <ul>
   <%= for {sender, message} <- @messages do %>
     <li style="list-style: none;">
@@ -34,3 +22,5 @@ Are we having fun yet?
     </li>
   <% end %>
 </ul>
+
+<.live_component module={TestComponent} id={"test_component"} />
