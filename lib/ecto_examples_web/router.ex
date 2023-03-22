@@ -27,6 +27,8 @@ defmodule EctoExamplesWeb.Router do
     live "/posts/:id/show/edit", PostLive.Show, :edit
 
     live "/fun", FunLive.Fun, :fun
+
+    live "/components", ComponentTestLive.Test, :test
   end
 
   # Other scopes may use custom stacks.
